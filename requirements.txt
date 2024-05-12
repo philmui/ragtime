@@ -1,0 +1,7 @@
+chainlit
+llama-index
+llama-index-tools-tavily-research
+python-dotenv==1.0.1
+qdrant-client
+qdrant-client[fastembed]
+tavily-python
