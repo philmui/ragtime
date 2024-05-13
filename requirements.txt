@@ -4,5 +4,4 @@ llama-index-tools-tavily-research==0.1.3
 python-dotenv==1.0.1
 qdrant-client==1.9.1
 qdrant-client[fastembed]
-streamlit==1.34.0
 tavily-python==0.3.3
