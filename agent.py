@@ -42,7 +42,7 @@ class RAGTimeAgent:
         self.verbose = verbose
 
 
-    def invoke(self, query_str: str) -> str:
+    def complete(self, query_str: str) -> str:
 
         response = self.llm.complete(
             simple_template.format(query_str=query_str)
