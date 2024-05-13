@@ -12,9 +12,16 @@ from llama_index.core import (
     SummaryIndex,
     VectorStoreIndex
 )
+from llama_index.core.indices.vector_store.retrievers import (
+    VectorIndexAutoRetriever,
+    VectorIndexRetriever
+)
 from llama_index.core.llms.function_calling import FunctionCallingLLM
 from llama_index.core.prompts import PromptTemplate
-from llama_index.core.query_engine import BaseQueryEngine
+from llama_index.core.query_engine import (
+    BaseQueryEngine,
+    RetrieverQueryEngine
+)
 from llama_index.embeddings.fastembed import FastEmbedEmbedding
 from llama_index.embeddings.openai import (
     OpenAIEmbedding, 
@@ -27,6 +34,8 @@ from llama_index.readers.web import (
     SpiderWebReader
 )
 from llama_index.vector_stores.qdrant import QdrantVectorStore
+from llama_index.core import get_response_synthesizer
+
 import qdrant_client
 
 import os
@@ -90,7 +99,7 @@ class RAGTimeAgent:
     )
 
     storage_context = StorageContext.from_defaults(vector_store=vector_store)
-
+    vector_retriever: VectorIndexRetriever = None
     vector_index: VectorStoreIndex = None
 
     firecrawl_reader = FireCrawlWebReader(
@@ -163,7 +172,15 @@ class RAGTimeAgent:
             storage_context=RAGTimeAgent.storage_context,
             use_async=True
         )
-        self._query_engine = RAGTimeAgent.vector_index.as_query_engine(use_async=True)
+        RAGTimeAgent.vector_retriever = VectorIndexRetriever(
+            index=RAGTimeAgent.vector_index,
+            similarity_top_k=3,
+            vector_store_query_mode="default"
+        )
+        self._query_engine = RetrieverQueryEngine(
+            retriever=RAGTimeAgent.vector_retriever,
+            response_synthesizer=get_response_synthesizer()
+        )
 
         # index = SummaryIndex.from_documents(
         #     documents,
