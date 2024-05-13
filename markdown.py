@@ -15,7 +15,7 @@ class CustomMarkdownConverter(MarkdownConverter):
         # Remove src and href attributes from images
         return ""
 
-class MarkdownConverterFactory:
+class MDConverterFactory:
 
     _converter: CustomMarkdownConverter = None
 

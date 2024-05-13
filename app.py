@@ -16,11 +16,17 @@ async def chat(message: cl.Message):
     response = ""
     try:
         url = extract_url(message.content)
-        agent = AgentFactory.get_agent([url])
         if url is not None:
+            await cl.Message(
+                content="Please wait while I process your information ..."
+            ).send()
+
+        agent = AgentFactory.get_agent()
+        if url is not None:
+            agent.ingest_urls([url])
             response = "What can I answer for you?"
         else:
-            response = agent.query(message.content)
+            response = await agent.aquery(message.content)
     except Exception as e:
         _logger.error(f"agent error: {e}")        
 
