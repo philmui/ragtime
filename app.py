@@ -9,13 +9,18 @@ from globals import (
 )
 
 from agent import AgentFactory
+from utils import extract_url
 
 @cl.on_message
-async def main(message: cl.Message):
+async def chat(message: cl.Message):
     response = ""
     try:
-        agent = AgentFactory.get_agent()
-        response = agent.complete(message.content)
+        url = extract_url(message.content)
+        agent = AgentFactory.get_agent([url])
+        if url is not None:
+            response = "What can I answer for you?"
+        else:
+            response = agent.query(message.content)
     except Exception as e:
         _logger.error(f"agent error: {e}")        
 
@@ -29,5 +34,5 @@ async def main(message: cl.Message):
 async def start():
 
     await cl.Message(
-        content="Hello there!"
+        content="Let me know a URL!"
     ).send()
