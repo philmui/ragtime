@@ -182,12 +182,6 @@ class RAGTimeAgent:
             response_synthesizer=get_response_synthesizer()
         )
 
-        # index = SummaryIndex.from_documents(
-        #     documents,
-        #     show_progress=True
-        # )
-        # self._query_engine = index.as_query_engine()
-
         return len(documents)
 
     async def aquery(self, query_str: str) -> str:
