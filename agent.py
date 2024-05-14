@@ -16,12 +16,19 @@ from llama_index.core.indices.vector_store.retrievers import (
     VectorIndexAutoRetriever,
     VectorIndexRetriever
 )
+from llama_index.core.llms import (
+    ChatMessage,
+    MessageRole
+)
+from llama_index.core.ingestion import IngestionPipeline
 from llama_index.core.llms.function_calling import FunctionCallingLLM
+from llama_index.core.node_parser import SentenceSplitter
 from llama_index.core.prompts import PromptTemplate
 from llama_index.core.query_engine import (
     BaseQueryEngine,
     RetrieverQueryEngine
 )
+from llama_index.core.response_synthesizers import ResponseMode
 from llama_index.embeddings.fastembed import FastEmbedEmbedding
 from llama_index.embeddings.openai import (
     OpenAIEmbedding, 
@@ -34,7 +41,7 @@ from llama_index.readers.web import (
     SpiderWebReader
 )
 from llama_index.vector_stores.qdrant import QdrantVectorStore
-from llama_index.core import get_response_synthesizer
+from llama_index.core import get_response_synthesizer, load_index_from_storage
 
 import qdrant_client
 
@@ -51,13 +58,16 @@ from typing import List, Sequence
 from markdown import MDConverterFactory
 
 from globals import (
+    embedding_model,
     gpt3_model,
     gpt4_model
 )
 
-Settings.llm = gpt4_model
-Settings.embed_model = OpenAIEmbedding(
-    model=OpenAIEmbeddingModeModel.TEXT_EMBED_3_LARGE
+Settings.llm = gpt3_model
+Settings.embed_model = embedding_model
+
+SYSTEM_TEMPLATE = (
+    ""
 )
 
 SIMPLE_TEMPLATE = (
@@ -66,19 +76,34 @@ SIMPLE_TEMPLATE = (
     "Query: {query_str}\n"
     "Response: "
 )
-simple_template = PromptTemplate(SIMPLE_TEMPLATE)
 
 RAG_TEMPLATE = (
     "Respond to the user's Query given the Context information below. \n"
     "---------------------\n"
-    "Context: {context_str}"
-    "\n---------------------\n"
+    "Context: {context_str}\n"
+    "---------------------\n"
     "If there is not sufficient information in the Context to answer "
-    "the user's Query, please reply 'I don't have sufficient verifiable information.':\n"
+    "the user's Query, please reply 'I don't have sufficient verifiable information.'\n"
     "Query: {query_str}\n"
+    "Response: "
 )
 
-qa_template = PromptTemplate(RAG_TEMPLATE)
+REFINE_RAG_TEMPLATE = (
+    "We have the opportunity to refine our response to the original answer "
+    "(only if needed) with some more context below.\n"
+    "---------------------\n"
+    "Context: {context_str}\n"
+    "---------------------\n"
+    "Given the new context, refine the original answer to better answer the Query: \n"
+    "Query: {query_str}. \n"
+    "If the context isn't useful, output the original response again.\n"
+    "Original Response: {existing_response}\n"
+    "New Response: "
+)
+
+simple_template = PromptTemplate(SIMPLE_TEMPLATE)
+rag_template = PromptTemplate(RAG_TEMPLATE)
+refine_template = PromptTemplate(REFINE_RAG_TEMPLATE)
 
 class RAGTimeAgent:
 
@@ -99,8 +124,26 @@ class RAGTimeAgent:
     )
 
     storage_context = StorageContext.from_defaults(vector_store=vector_store)
-    vector_retriever: VectorIndexRetriever = None
-    vector_index: VectorStoreIndex = None
+    vector_index = VectorStoreIndex.from_vector_store(
+        vector_store=vector_store,
+        storage_context=storage_context
+    )
+    vector_retriever = VectorIndexRetriever(
+        index=vector_index,
+        similarity_top_k=6,
+        vector_store_query_mode="mmr"
+    )
+    query_engine = vector_index.as_query_engine(
+        similarity_top_k=6,
+        vector_store_query_mode="mmr",
+        vector_store_kwargs={
+            "mmr_prefetch_k": 20,
+        },
+        response_synthesizer=get_response_synthesizer(
+            response_mode=ResponseMode.TREE_SUMMARIZE,
+            refine_template=refine_template
+        )
+    )
 
     firecrawl_reader = FireCrawlWebReader(
         api_key=FIRECRAWL_API_KEY,
@@ -136,10 +179,6 @@ class RAGTimeAgent:
             raise ValueError("URLs cannot be None.")
         self._urls = url_list
 
-    @property
-    def query_engine(self) -> BaseQueryEngine:
-        return self._query_engine
-
     def __init__(
         self,
         llm: FunctionCallingLLM,
@@ -147,7 +186,6 @@ class RAGTimeAgent:
     ):
         self._llm = llm
         self.verbose = verbose
-
 
     def ingest_urls(
         self,
@@ -166,35 +204,34 @@ class RAGTimeAgent:
             documents.extend(docs)
         
         _logger.info(f"crawled {len(documents)} pages")
-        
+
         RAGTimeAgent.vector_index = VectorStoreIndex.from_documents(
             documents=documents,
             storage_context=RAGTimeAgent.storage_context,
-            use_async=True
+            use_async=True,
+            transformations=[
+                SentenceSplitter(chunk_size=512, chunk_overlap=32),
+                embedding_model
+            ]
         )
-        RAGTimeAgent.vector_retriever = VectorIndexRetriever(
-            index=RAGTimeAgent.vector_index,
-            similarity_top_k=3,
-            vector_store_query_mode="default"
-        )
-        self._query_engine = RetrieverQueryEngine(
-            retriever=RAGTimeAgent.vector_retriever,
-            response_synthesizer=get_response_synthesizer()
-        )
+        # RAGTimeAgent.vector_index.refresh_ref_docs(documents=documents)
+        # RAGTimeAgent.vector_index.build_index_from_nodes(nodes=nodes)
 
         return len(documents)
 
     async def aquery(self, query_str: str) -> str:
         output = ""
-        if self._query_engine is not None:
-            response = await self._query_engine.aquery(query_str)
+        if RAGTimeAgent.query_engine is not None:
+            response = await RAGTimeAgent.query_engine.aquery(
+                query_str
+            )
             output = response.response
         else:
-            output = await self.complete(query_str)
+            output = await self.acomplete(query_str)
         return output
 
 
-    async def complete(self, query_str: str) -> str:
+    async def acomplete(self, query_str: str) -> str:
 
         response = await self.llm.acomplete(
             simple_template.format(query_str=query_str)
